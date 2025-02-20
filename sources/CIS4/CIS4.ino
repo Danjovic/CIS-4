@@ -744,6 +744,9 @@ void runSET_BEEP(void) {
 // adjust hours 
 void runSET_HOUR(void) {
   if (displayMode) {
+     // set blink mode, only in cistercian mode
+     displayBlink = true;
+
     // show Cistercian of hours
     fulfillCistercian();  // fullfill and mask to save code
     displayPixels &= ~((1 << 2) | (1 << 3) | (1 << 6) | (1 << 7) | (1 << 10) | (1 << 11) | (1 << 14) | (1 << 15));
@@ -833,6 +836,7 @@ void runSET_MINUTE(void) {
     index = 0;
     delayticks = 0;
     state = staSHOW_TIME;
+    displayBlink = false;    // turn off blink 
   }
 }
 //
