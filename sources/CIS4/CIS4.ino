@@ -24,7 +24,10 @@
  *                                                       
  *    Minimalist representation (4 led) Cistercian Number clock
  *    Danjovic 2025
- *    Released under GPL 3.0                                                        
+ *    Released under GPL 3.0   
+ *
+ *    Version 1.1 - June, 2025
+ *    Added Autoflip, - flip displayu mode at 15 and 45 seconds of every minute
  */
 
 
@@ -72,7 +75,8 @@
   Bits   Function  
     7    Decimal (0) / Cistercian (1)
     6    Hourly Beep Off(0) / On (1)
-   5-3   Not used
+    5    Autoflip Off(0) / On (1) 
+   4-3   Not used
    2-0   Color mode: 0 0 0 random  (changes every 10 seconds)
                      0 0 1 Blue
                      0 1 0 Green
@@ -128,7 +132,7 @@
 #define sendNACK false
 #define RTC_ADDRESS 0x68
 
-
+#define MAX_SETUP_MODES 4
 
 //
 //    _ __  __ _ __ _ _ ___ ___
@@ -177,6 +181,7 @@ typedef enum {
   staSETUP,
   staSET_COLOR,
   staSET_BEEP,
+  staSET_AUTO,
   staSET_HOUR,
   staSET_MINUTE
 } t_states;
@@ -262,6 +267,7 @@ void runCHANGE_MODE(void);     // switch Cistercian/Decimal mode
 void runSETUP(void);           // main hub for changing 
 void runSET_COLOR(void);       // change display colors
 void runSET_BEEP(void);        // beep every hour
+void runSET_AUTO(void);        // Auto flip mode 
 void runSET_HOUR(void);        // adjust hours 
 void runSET_MINUTE(void);      // adjust minutes
 
@@ -362,13 +368,15 @@ const PROGMEM uint16_t decDigits[10] = {
 
 const PROGMEM uint32_t colorTable[7] = { 0x0000ff, 0x00ff00, 0x00ffff, 0xff0000, 0xff00ff, 0xffff00, 0xffffff };
 
-const PROGMEM uint8_t translate[16] = { 0, 9, 10, 19, 1, 8, 11, 18, 2, 7, 12, 17, 3, 6, 13, 16 };  // TODO change for 4x4 display
+//const PROGMEM uint8_t translate[16] = { 0, 9, 10, 19, 1, 8, 11, 18, 2, 7, 12, 17, 3, 6, 13, 16 };  // TODO change for 4x4 display
 //const PROGMEM uint8_t translate[16] = { 0, 1, 2, 3, 7, 6, 5, 4, 8, 9, 10, 11, 15, 14, 13, 12 };
+const PROGMEM uint8_t translate[16] = { 0,4,8,12,1,5,9,13,2,6,10,14,3,7,11,15 };
 
-const PROGMEM uint16_t setup_letters[3] = {
-  (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 11),                                             // letterT
-  (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 7) | (1 << 8) | (1 << 11),                       // letterC
-  (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10)  // letterB
+const PROGMEM uint16_t setup_letters[MAX_SETUP_MODES] = {
+  (1 << 3) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 7) | (1 << 11),                                              // letter T
+  (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 7) | (1 << 8) | (1 << 11),                        // letter C
+  (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 4) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 9)  | (1 << 10),  // letter B
+  (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 5) | (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10) | (1 << 11)  // letter A  
 };
 
 
@@ -391,12 +399,14 @@ tinyNeoPixel pixels(NUMPIXELS, neopixelPIN, NEO_GRB + NEO_KHZ800);
 // clock configuration and control
 bool displayMode;          // Decimal / Cistercian 4
 bool beepMode;             // Hourly beep on / off
+bool autoMode;             // Autoflip on / off
 uint8_t baseColor;         // Display colors
-uint8_t setupMode = 0;     // setup mode (time,beep,color)
+uint8_t setupMode = 0;     // setup mode (time,beep,color,autoflip)
 t_states state = staINIT;  // main machine state
 
 // RTC
 t_ds3231records rtc;
+uint8_t hours, minutes, seconds;
 uint8_t timeUnits, timeTenths, timeHundreds, timeThousands;
 
 // display
@@ -509,6 +519,9 @@ void loop() {
     case staSET_BEEP:
       runSET_BEEP();
       break;
+    case staSET_AUTO:
+      runSET_AUTO();
+      break;
     case staSET_HOUR:
       runSET_HOUR();
       break;
@@ -553,6 +566,9 @@ void runINIT(void) {
   initializeColors(baseColor);
   //EEPROM.write(EEPROM_CONFIG_ADDRESS, value);
 
+  // initialize autoflip mode
+  autoMode = (configValue & (1 << 5) ? true : false);
+
   // initialize beep mode
   beepMode = (configValue & (1 << 6) ? true : false);
 
@@ -561,7 +577,7 @@ void runINIT(void) {
 
   // define next state
   state = staSHOW_TIME;
-  //state = (displayMode ? staSHOW_CIST : staSHOW_DEC);
+
 }
 //
 
@@ -592,7 +608,9 @@ void runSHOW_TIME(void) {
     }
   }
 
-  if (buttonEvent == btPULSE) {
+
+  if ( (buttonEvent == btPULSE) || (autoMode==true && ( (seconds==15) || (seconds==45) ) ) )  {
+//  if (buttonEvent == btPULSE) {
     delayticks = 0;
     index = 0;
     state = staSHOW_FLIP_MODE;
@@ -669,7 +687,7 @@ void runSETUP(void) {
   displayPixels = pgm_read_dword(setup_letters + setupMode);
 
   if (buttonEvent == btPULSE) {
-    if (++setupMode > 2) setupMode = 0;
+    if (++setupMode == MAX_SETUP_MODES ) setupMode = 0;
     delayticks = 0;
   }
 
@@ -681,9 +699,12 @@ void runSETUP(void) {
       case 1:
         state = staSET_COLOR;
         break;
-      case 2: state = staSET_COLOR;
-      default:
+      case 2: 
         state = staSET_BEEP;
+        break;
+      case 3: 
+      default:
+        state = staSET_AUTO;
         break;
     }
   }
@@ -732,13 +753,47 @@ void runSET_BEEP(void) {
     // reset blink mode
     displayBlink = false;
     // save beep state  in eeprom
-    uint8_t configValue = EEPROM.read(EEPROM_CONFIG_ADDRESS) & ~(1 << 6);  // mask bits 6
+    uint8_t configValue = EEPROM.read(EEPROM_CONFIG_ADDRESS) & ~(1 << 6);  // mask bit 6
     configValue |= (beepMode ? (1 << 6) : 0);                              // set or reset beep bit accordingly
-    EEPROM.write(EEPROM_CONFIG_ADDRESS, configValue);                      //  add base color
+    EEPROM.write(EEPROM_CONFIG_ADDRESS, configValue);                      //  write config bit
     state = staSHOW_TIME;
   }
 }
 //
+
+
+
+// Enable/Disable Autoflip display mode
+void runSET_AUTO(void) {
+  // set blink mode
+  displayBlink = true;
+
+  // show 0 / 1 number according with last state
+  displayPixels = pgm_read_word(decDigits + (autoMode ? 1 : 0));
+
+  // change mode
+  if (buttonEvent == btPULSE) {
+    autoMode = !autoMode;
+  }
+
+  if (buttonEvent == btLONG) {
+    // reset blink mode
+    displayBlink = false;
+    // save autoflip state  in eeprom
+    uint8_t configValue = EEPROM.read(EEPROM_CONFIG_ADDRESS) & ~(1 << 5);  // mask bit 5
+    configValue |= (autoMode ? (1 << 5) : 0);                              // set or reset autoflip bit accordingly
+    EEPROM.write(EEPROM_CONFIG_ADDRESS, configValue);                      //  write config bit
+    state = staSHOW_TIME;
+  }
+}
+//
+
+
+
+
+
+
+
 
 
 // adjust hours 
@@ -991,7 +1046,7 @@ void retrieveTime(void) {
   static uint8_t beepCounter = 0;
   static uint8_t sampleTimer = 0;
 
-  uint8_t hour, minute, second;
+ 
   if (sampleTimer == 0) {  // sample every quarter of second
     readRtc(&rtc);
   }
@@ -1003,8 +1058,14 @@ void retrieveTime(void) {
   timeHundreds = (uint8_t)rtc.datetime.hours.units;
   timeThousands = (uint8_t)rtc.datetime.hours.tens;
 
-  // Beep every second
-  if (beepMode && (minute + second) == 0) {
+  // fulfill time variables
+  hours = (uint8_t)rtc.datetime.hours.tens * 10 + (uint8_t)rtc.datetime.hours.units;
+  minutes = (uint8_t)rtc.datetime.minutes.tens * 10 + (uint8_t)rtc.datetime.minutes.units;
+  seconds = (uint8_t)rtc.datetime.seconds.tens * 10 + (uint8_t)rtc.datetime.seconds.units;
+
+
+  // Beep every integer hour
+  if (beepMode && ((hours + minutes + seconds) == 0) ) {
 
     if (beepCounter++ < 20) {
       digitalWrite(buzzerPin, HIGH);
@@ -1140,6 +1201,6 @@ uint8_t I2Cread(bool nack) {
 
 //
 //      . . o o    o o . o
-//      . . o o    o o . 0
+//      . . o o    o o . o
 //      . . . .    . . o o
 //      o o o o    o o o o
